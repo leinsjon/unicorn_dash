@@ -108,6 +108,12 @@
     </div>
     <h2>Where?</h2>
     <div class="row" id="themeRow"></div>
+    <h2>How splatty?</h2>
+    <div class="row" id="goreRow">
+      <button class="choice" data-gore="off"><span class="em">🙈</span>Mild<small>bonk &amp; boing</small></button>
+      <button class="choice" data-gore="rainbow"><span class="em">🌈</span>Rainbow goo<small>super splatty</small></button>
+      <button class="choice" data-gore="red"><span class="em">🍅</span>Ketchup<small>extra gory!</small></button>
+    </div>
     <button class="big" id="playBtn">▶ Play!</button>
   </div>
 </div>
@@ -155,6 +161,8 @@ const TRUCK_COLORS = ['#ff6b6b', '#339af0', '#20c997', '#fab005', '#845ef7'];
 const CARRIAGE_COLORS = ['#9c36b5', '#c92a2a', '#1971c2', '#2b8a3e'];
 const HORSE_COLORS = ['#a0522d', '#8b5a2b', '#f1e3c8', '#5c3a21', '#d9a066'];
 const RAINBOW = ['#ff6b9d', '#ffa94d', '#ffe066', '#69db7c', '#4dabf7', '#b47cff'];
+const KETCHUP = ['#d90429', '#ef233c', '#b3001b', '#ff2d55', '#c1121f'];
+const GORE_MODES = ['off', 'rainbow', 'red'];
 
 const THEMES = {
   meadow: { name: 'Meadow', emoji: '🌼', sky: ['#7fd3ff', '#c9f0ff'], grass: '#7ed957', grass2: '#6cc94a', road: '#5d6270', line: '#fff3a0', curb: '#e9ecef', decor: ['flower', 'flower', 'bush', 'mushroom'] },
@@ -165,10 +173,13 @@ const THEMES = {
 };
 
 // ---------- Settings (remembered per device) ----------
-let settings = { diff: 'easy', theme: 'meadow', sound: true };
+let settings = { diff: 'easy', theme: 'meadow', sound: true, gore: 'rainbow' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('unicornDash') || '{}')); } catch (e) {}
 if (!DIFF[settings.diff]) settings.diff = 'easy';
 if (!THEMES[settings.theme]) settings.theme = 'meadow';
+if (!GORE_MODES.includes(settings.gore)) settings.gore = 'rainbow';
+const gory = () => settings.gore !== 'off';
+const goo = () => settings.gore === 'red' ? pick(KETCHUP) : pick(RAINBOW);
 function saveSettings() { try { localStorage.setItem('unicornDash', JSON.stringify(settings)); } catch (e) {} }
 
 // ---------- Layout ----------
@@ -182,6 +193,7 @@ function resize() {
   offX = (W - newCols * cell) / 2;
   offY = H - ROWS * cell;
   if (newCols !== cols || !lanes.length) { cols = newCols; buildWorld(); }
+  redrawStains();
 }
 
 // World coords: x in cells from board left, y in cells from board top (down).
@@ -256,7 +268,7 @@ let time = 0;
 function startCol() { return Math.floor(cols / 2); }
 function resetUnicorn() {
   u.col = u.fromCol = startCol(); u.row = u.fromRow = START_ROW; u.t = 1; u.hopping = false;
-  u.state = 'alive'; u.crashT = 0; u.winT = 0; u.queued = null; u.facing = 1;
+  u.state = 'alive'; u.crashT = 0; u.winT = 0; u.queued = null; u.facing = 1; u.spurtAcc = 0;
 }
 
 function unicornPos() {
@@ -287,14 +299,70 @@ function crash(v) {
   u.crashDir = v.laneDir; u.cx = p.x; u.cy = rowBottom(p.row) - 0.1;
   // snap logical position to the lane we got hit in
   u.row = p.row; u.col = Math.round(p.x - 0.5);
+  const red = settings.gore === 'red' ? '#d90429' : null;
   if (v.type === 'truck') {
-    sfx.boom(); popText('KABOOM!', u.cx, u.cy - 1, '#ff922b');
+    sfx.boom(); popText(gory() ? pick(['KA-SPLOOSH!', 'KABLOOEY!', 'MEGA SPLAT!']) : 'KABOOM!', u.cx, u.cy - 1, red || '#ff922b');
     explode(u.cx, u.cy - 0.45);
+    if (gory()) {
+      sfx.splat(1.4); gooBurst(u.cx, u.cy - 0.45, 90, 9, -Math.PI / 2, Math.PI, 0.09, 0.17);
+      addStain(u.cx, u.cy - 0.35, 0.75); shake = 1; flash = 1;
+      v.gooT = 4;
+    } else shake = 0.4;
   } else if (v.type === 'car') {
-    sfx.squish(); popText('SQUISH!', u.cx, u.cy - 1, '#4dabf7');
+    sfx.squish(); popText(gory() ? pick(['SPLAT!', 'SQUELCH!', 'SPLORT!']) : 'SQUISH!', u.cx, u.cy - 1, red || '#4dabf7');
+    if (gory()) {
+      sfx.splat(1);
+      // goo squirts out both sides of the flattened unicorn
+      gooBurst(u.cx, u.cy - 0.15, 28, 6, Math.PI + 0.35, 0.5, 0.07, 0.13);
+      gooBurst(u.cx, u.cy - 0.15, 28, 6, -0.35, 0.5, 0.07, 0.13);
+      gooBurst(u.cx, u.cy - 0.2, 20, 5, -Math.PI / 2, 0.9, 0.06, 0.1);
+      addStain(u.cx, u.cy - 0.25, 0.6); shake = 0.6; flash = 0.6;
+      v.gooT = 3;
+    }
   } else {
-    sfx.bonk(); popText('BONK!', u.cx, u.cy - 1, '#f06595');
+    sfx.bonk(); popText(gory() ? pick(['BONK! SPLAT!', 'OUCHIE!', 'SPLURT!']) : 'BONK!', u.cx, u.cy - 1, red || '#f06595');
+    if (gory()) { sfx.splat(0.7); u.spurtAcc = 0; shake = 0.45; flash = 0.4; }
   }
+}
+
+// ---------- Goo (gore mode) ----------
+let stains = [];
+// Splats are baked into an offscreen layer so hundreds of them stay cheap on iPad.
+const stainLayer = document.createElement('canvas'), sctx = stainLayer.getContext('2d');
+function pushStain(st) {
+  stains.push(st);
+  if (stains.length > 1500) { stains.splice(0, stains.length - 1200); redrawStains(); } else paintStain(st);
+}
+function paintStain(st) {
+  sctx.globalAlpha = st.a; sctx.fillStyle = st.c; sctx.beginPath();
+  for (const [bx, by, br] of st.blobs) { const X = sx(st.x + bx), Y = sy(st.y + by); sctx.moveTo(X + br * cell, Y); sctx.ellipse(X, Y, br * cell, br * cell * 0.6, 0, 0, Math.PI * 2); }
+  sctx.fill();
+  const b0 = st.blobs[0];
+  if (b0[2] > 0.12) { sctx.globalAlpha = st.a * 0.45; sctx.fillStyle = '#fff'; sctx.beginPath(); sctx.ellipse(sx(st.x - b0[2] * 0.35), sy(st.y - b0[2] * 0.15), b0[2] * cell * 0.25, b0[2] * cell * 0.1, 0, 0, Math.PI * 2); sctx.fill(); }
+  sctx.globalAlpha = 1;
+}
+function redrawStains() {
+  if (stainLayer.width !== canvas.width || stainLayer.height !== canvas.height) { stainLayer.width = canvas.width; stainLayer.height = canvas.height; }
+  sctx.setTransform(DPR, 0, 0, DPR, 0, 0); sctx.clearRect(0, 0, W, H);
+  for (const st of stains) paintStain(st);
+}
+let shake = 0, flash = 0;
+function gooBurst(x, y, n, speed, ang, spread, s0, s1) {
+  for (let i = 0; i < n; i++) {
+    const a = ang + rand(-spread, spread), sp = rand(speed * 0.35, speed);
+    particles.push({ kind: 'drop', x: x + rand(-0.1, 0.1), y: y + rand(-0.1, 0.1), vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, g: 14,
+      life: 3, max: 3, c: goo(), rot: 0, vr: 0, size: rand(s0, s1), land: rowBottom(u.row) - rand(0.08, 0.9) });
+  }
+}
+function addStain(x, y, r, c) {
+  const col = c || goo(), blobs = [];
+  blobs.push([0, 0, r * 0.55]);
+  const n = 5 + Math.floor(r * 14);
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2), d = rand(0.2, 1.1) * r;
+    blobs.push([Math.cos(a) * d, Math.sin(a) * d * 0.45, rand(0.08, 0.3) * r * (1.2 - d / r * 0.6)]);
+  }
+  pushStain({ x, y, blobs, c: col, a: 0.92 });
 }
 
 function win() {
@@ -314,7 +382,7 @@ function popText(str, x, y, color) { texts.push({ str, x, y, color, t: 0 }); }
 
 function explode(x, y) {
   const parts = [
-    { kind: 'blob', c: '#ffffff', n: 12 }, { kind: 'leg', c: '#ffffff', n: 4 },
+    { kind: 'blob', c: '#ffffff', n: gory() ? 18 : 12 }, { kind: 'leg', c: '#ffffff', n: 4 },
     { kind: 'horn', c: '#ffd34d', n: 1 }, { kind: 'star', c: null, n: 14 },
     { kind: 'heart', c: '#ff8cc6', n: 5 }, { kind: 'mane', c: null, n: 10 },
   ];
@@ -324,7 +392,8 @@ function explode(x, y) {
     particles.push({
       kind: p.kind, x: x + rand(-0.2, 0.2), y: y + rand(-0.2, 0.2), vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1.5,
       g: 9, life: rand(1.3, 1.9), max: 1.9, c: p.c || pick(RAINBOW), rot: rand(0, 6), vr: rand(-12, 12),
-      size: p.kind === 'blob' ? rand(0.1, 0.2) : rand(0.09, 0.15), bounce: rowBottom(u.row) - 0.05,
+      size: p.kind === 'blob' ? rand(0.1, 0.2) : rand(0.09, 0.15), bounce: rowBottom(u.row) - rand(0.05, 0.6),
+      gib: gory() && ['blob', 'leg', 'horn'].includes(p.kind),
     });
   }
   // smoke puff ring
@@ -346,6 +415,15 @@ function update(dt) {
   for (const lane of lanes) {
     for (const v of lane.vehicles) {
       v.x += lane.dir * lane.speed * dt;
+      if (v.gooT > 0) {
+        v.gooT -= dt; v.trackAcc = (v.trackAcc || 0) + dt;
+        if (v.trackAcc > 0.06) {
+          v.trackAcc = 0;
+          const k = Math.min(1, v.gooT / 2), yb = rowBottom(lane.row) - 0.12;
+          const wx = lane.dir > 0 ? [0.25, v.len - 0.3] : [0.3, v.len - 0.25];
+          if (v.x > -1 && v.x < cols + 1) for (const w of wx) pushStain({ x: v.x + w, y: yb, blobs: [[0, 0, 0.07 + 0.05 * k]], c: goo(), a: 0.4 + 0.5 * k });
+        }
+      }
       if (v.x >= lane.A + lane.L) v.x -= lane.L;
       if (v.x < lane.A) v.x += lane.L;
     }
@@ -372,6 +450,20 @@ function update(dt) {
       }
     } else if (u.state === 'crash') {
       u.crashT += dt;
+      if (gory() && u.crashType === 'carriage' && u.crashT > 0.3 && u.crashT < 1.6) {
+        u.spurtAcc += dt;
+        while (u.spurtAcc > 0.03) {
+          u.spurtAcc -= 0.03;
+          const kx = Math.max(0.5 - u.cx, Math.min(cols - 0.5 - u.cx, u.crashDir * 0.9));
+          const hx = u.cx + kx + u.crashDir * 0.45, hy = u.cy - 0.3;
+          const a = -Math.PI / 2 + u.crashDir * 0.5 + Math.sin(time * 18) * 0.35, sp = rand(3.5, 5.5);
+          particles.push({ kind: 'drop', x: hx, y: hy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, g: 14, life: 3, max: 3, c: goo(), rot: 0, vr: 0, size: rand(0.05, 0.09), land: rowBottom(u.row) - rand(0.08, 0.8) });
+        }
+        if (Math.random() < dt * 5) sfx.drip();
+      }
+      if (gory() && u.crashType === 'car' && u.crashT > 0.1 && u.crashT < 1.3 && Math.random() < dt * 25) {
+        gooBurst(u.cx + rand(-0.4, 0.4), u.cy - 0.1, 1, 2.5, -Math.PI / 2, 1.2, 0.04, 0.07);
+      }
       const dur = u.crashType === 'car' ? 1.7 : 1.9;
       if (u.crashT >= dur) {
         resetUnicorn(); u.invuln = 1.3; sfx.pop();
@@ -394,12 +486,23 @@ function update(dt) {
     }
   }
 
+  const newDrops = [];
   for (const p of particles) {
     p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt; p.life -= dt;
+    if (p.kind === 'drop') {
+      p.rot = Math.atan2(p.vy, p.vx);
+      if (p.vy > 0 && p.y > p.land) { addStain(p.x, p.land, p.size * rand(1.6, 2.6), p.c); p.life = 0; }
+    }
+    if (p.gib) {
+      if (p.vy !== 0 && Math.random() < dt * 30 && p.life > 0.6) newDrops.push({ kind: 'drop', x: p.x, y: p.y, vx: p.vx * 0.2, vy: p.vy * 0.2, g: 14, life: 2, max: 2, c: goo(), rot: 0, vr: 0, size: rand(0.03, 0.06), land: p.bounce + rand(-0.05, 0.05) });
+      if (p.y > p.bounce && p.vy > 0 && !p.stained) { p.stained = true; addStain(p.x, p.bounce, p.size * 2.2); sfx.drip(); }
+    }
     if (p.bounce !== undefined && p.y > p.bounce && p.vy > 0) { p.y = p.bounce; p.vy *= -0.35; p.vx *= 0.6; p.vr *= 0.5; }
     if (p.kind === 'puff') { p.vx *= 0.92; p.vy *= 0.92; p.size += dt * 0.5; }
   }
-  particles = particles.filter((p) => p.life > 0);
+  particles = particles.filter((p) => p.life > 0).concat(newDrops);
+  if (particles.length > 900) particles.splice(0, particles.length - 900);
+  shake = Math.max(0, shake - dt * 2.2); flash = Math.max(0, flash - dt * 3);
   for (const t of texts) t.t += dt;
   texts = texts.filter((t) => t.t < 1.3);
 
@@ -706,11 +809,16 @@ function drawDecor(d) {
 function drawScene() {
   const th = THEMES[settings.theme];
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = th.sky[0]; ctx.fillRect(0, 0, W, H);
+  if (shake > 0) {
+    const m = shake * shake * cell * 0.22;
+    ctx.setTransform(DPR, 0, 0, DPR, rand(-m, m) * DPR, rand(-m, m) * DPR);
+  }
 
   // sky
   const g = ctx.createLinearGradient(0, 0, 0, Math.max(offY + cell, 1));
   g.addColorStop(0, th.sky[0]); g.addColorStop(1, th.sky[1]);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = g; ctx.fillRect(-40, -40, W + 80, H + 80);
   if (th.night) {
     for (const s of skyStars) {
       const a = 0.5 + Math.sin(time * 2 + s.t) * 0.4;
@@ -749,7 +857,8 @@ function drawScene() {
       if (r === GOAL_ROW) drawGoalStrip(y0, y1);
     }
   }
-  if (H > sy(ROWS)) { ctx.fillStyle = th.grass; ctx.fillRect(0, sy(ROWS), W, H - sy(ROWS)); }
+  if (H > sy(ROWS)) { ctx.fillStyle = th.grass; ctx.fillRect(-40, sy(ROWS), W + 80, H - sy(ROWS) + 40); }
+  drawStains();
 
   // objects, back to front
   const up = unicornPos();
@@ -789,6 +898,10 @@ function drawScene() {
   }
 
   drawParticles();
+  if (flash > 0) {
+    ctx.fillStyle = settings.gore === 'red' ? `rgba(220,0,30,${flash * 0.35})` : `rgba(255,120,200,${flash * 0.3})`;
+    ctx.fillRect(-40, -40, W + 80, H + 80);
+  }
   drawTexts();
   if (gameState === 'play' && u.state === 'alive' && !hasHopped && hintTimer > 0.6) drawHint(up);
   if (drag.active && gameState === 'play') {
@@ -830,14 +943,24 @@ function drawPlayer(p) {
 
   if (u.state === 'crash') {
     const t = u.crashT;
-    if (u.crashType === 'truck') { ctx.restore(); return; } // in pieces!
+    if (u.crashType === 'truck') { // in pieces!
+      if (gory() && t > 0.4) { // little ghost floats up to unicorn heaven
+        const gt = t - 0.4;
+        ctx.globalAlpha = Math.min(0.6, gt * 2) * Math.max(0, 1 - Math.max(0, gt - 1.1) * 2.5);
+        ctx.translate(sx(u.cx) + Math.sin(gt * 6) * cell * 0.1, sy(u.cy) - gt * cell * 1.2);
+        ctx.scale(k * 0.8, k * 0.8);
+        drawUnicorn({ eyes: 'happy' });
+        ctx.beginPath(); ctx.ellipse(18, -102, 16, 5, 0, 0, Math.PI * 2); ctx.lineWidth = 4; ctx.strokeStyle = '#ffd34d'; ctx.stroke();
+      }
+      ctx.restore(); return;
+    }
     if (u.crashType === 'car') {
       const popBack = Math.max(0, (t - 1.45) / 0.25);
       const s = Math.min(1, t / 0.06);
       const sy_ = 1 - s * 0.8 + popBack * 0.8, sx_ = 1 + s * 0.6 - popBack * 0.6;
       ctx.translate(sx(u.cx), sy(u.cy));
       ctx.scale(k * sx_ * u.facing, k * sy_);
-      drawUnicorn({ eyes: 'swirl' });
+      drawUnicorn({ eyes: gory() ? 'x' : 'swirl' });
       ctx.restore();
       return;
     }
@@ -850,7 +973,7 @@ function drawPlayer(p) {
     ctx.translate(sx(u.cx + kx), sy(u.cy - ky));
     ctx.translate(0, -cell * 0.18); ctx.rotate(rot); ctx.translate(0, cell * 0.18);
     ctx.scale(k * u.facing, k);
-    drawUnicorn({ eyes: 'swirl' });
+    drawUnicorn({ eyes: gory() ? 'x' : 'swirl' });
     ctx.restore();
     // dizzy stars
     if (t > 0.35) {
@@ -887,6 +1010,10 @@ function drawPlayer(p) {
   ctx.restore();
 }
 
+function drawStains() {
+  if (stains.length) ctx.drawImage(stainLayer, 0, 0, W, H);
+}
+
 function drawParticles() {
   for (const p of particles) {
     const a = Math.min(1, p.life / (p.max * 0.35));
@@ -897,9 +1024,14 @@ function drawParticles() {
     ctx.lineWidth = Math.max(1.5, cell * 0.025); ctx.strokeStyle = OUT; ctx.lineJoin = 'round';
     switch (p.kind) {
       case 'star': starPath(0, 0, s); fs(p.c, OUT); break;
+      case 'drop': {
+        const st = Math.min(2.2, 1 + Math.hypot(p.vx, p.vy) * 0.12);
+        ell(0, 0, s * st, s / Math.sqrt(st)); ctx.lineWidth = Math.max(1, cell * 0.012); fs(p.c, OUT);
+        break;
+      }
       case 'heart': heartPath(0, 0, s * 0.8); fs(p.c, OUT); break;
-      case 'blob': ell(0, 0, s, s * 0.8); fs('#ffffff', OUT); break;
-      case 'leg': rr(-s * 0.35, -s, s * 0.7, s * 2, s * 0.3); fs('#ffffff', OUT); rr(-s * 0.4, s * 0.6, s * 0.8, s * 0.5, s * 0.2); fs('#c8a8ff', OUT); break;
+      case 'blob': ell(0, 0, s, s * 0.8); fs('#ffffff', OUT); if (p.gib) { ell(s * 0.3, s * 0.2, s * 0.55, s * 0.4); fs(p.goo || (p.goo = goo()), null); } break;
+      case 'leg': rr(-s * 0.35, -s, s * 0.7, s * 2, s * 0.3); fs('#ffffff', OUT); rr(-s * 0.4, s * 0.6, s * 0.8, s * 0.5, s * 0.2); fs('#c8a8ff', OUT); if (p.gib) { ell(0, -s, s * 0.42, s * 0.25); fs(p.goo || (p.goo = goo()), OUT); } break;
       case 'horn': ctx.beginPath(); ctx.moveTo(-s * 0.5, s); ctx.lineTo(s * 0.5, s); ctx.lineTo(0, -s * 1.6); ctx.closePath(); fs('#ffd34d', OUT); break;
       case 'mane': circ(0, 0, s * 0.8); fs(p.c, OUT); break;
       case 'confetti': ctx.fillStyle = p.c; ctx.fillRect(-s * 0.6, -s * 0.3, s * 1.2, s * 0.6); break;
@@ -1007,6 +1139,8 @@ const sfx = (() => {
     squish: () => { tone(500, 60, 0.35, 'sawtooth', 0.15); noise(0.25, 0.2, 600); },
     boom: () => { noise(0.9, 0.7, 700); tone(140, 40, 0.6, 'sine', 0.4); },
     pop: () => tone(600, 1200, 0.15, 'sine', 0.15),
+    splat: (big = 1) => { noise(0.35 * big, 0.55, 350); tone(180, 45, 0.3 * big, 'sawtooth', 0.18); tone(90, 30, 0.4, 'square', 0.1, 0.05); noise(0.15, 0.3, 1400); },
+    drip: () => tone(900 + Math.random() * 500, 250, 0.08, 'sine', 0.06),
     sparkle: () => tone(1200 + Math.random() * 900, 2000, 0.12, 'sine', 0.06),
     win: () => { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, f, 0.22, 'triangle', 0.18, i * 0.13)); },
   };
@@ -1024,6 +1158,7 @@ for (const [key, th] of Object.entries(THEMES)) {
 function refreshChoices() {
   document.querySelectorAll('[data-diff]').forEach((b) => b.classList.toggle('sel', b.dataset.diff === settings.diff));
   document.querySelectorAll('[data-theme]').forEach((b) => b.classList.toggle('sel', b.dataset.theme === settings.theme));
+  document.querySelectorAll('[data-gore]').forEach((b) => b.classList.toggle('sel', b.dataset.gore === settings.gore));
   document.getElementById('soundBtn').textContent = settings.sound ? '🔊' : '🔇';
 }
 document.getElementById('diffRow').addEventListener('click', (e) => {
@@ -1035,10 +1170,15 @@ themeRow.addEventListener('click', (e) => {
   settings.theme = b.dataset.theme; saveSettings(); refreshChoices(); buildWorld(); sfx.unlock(); sfx.pop();
   document.body.style.background = THEMES[settings.theme].sky[0];
 });
+document.getElementById('goreRow').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-gore]'); if (!b) return;
+  settings.gore = b.dataset.gore; saveSettings(); refreshChoices(); sfx.unlock();
+  if (gory()) sfx.splat(0.6); else sfx.pop();
+});
 function startGame() {
   sfx.unlock();
   buildWorld(); resetUnicorn(); u.invuln = 0.8;
-  particles = []; texts = [];
+  particles = []; texts = []; stains = []; redrawStains(); shake = 0; flash = 0;
   gameState = 'play';
   menuEl.classList.add('hidden'); winEl.classList.add('hidden'); hudEl.classList.remove('hidden');
 }
@@ -1073,7 +1213,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // test hook
-window.__game = { u, lanes, get state() { return gameState; }, tryHop, startGame, crash, win, setTheme: (t) => { settings.theme = t; buildWorld(); } };
+window.__game = { u, lanes, get state() { return gameState; }, tryHop, startGame, crash, win, setGore: (g) => { settings.gore = g; }, get stains() { return stains; }, get particles() { return particles; }, setTheme: (t) => { settings.theme = t; buildWorld(); } };
 })();
 </script>
 </body>
